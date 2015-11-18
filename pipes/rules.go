@@ -761,6 +761,20 @@ type Metadata struct {
 	content      *goquery.Selection
 }
 
+func (m *Metadata) GetDate() string                { return m.date }
+func (m *Metadata) GetAuthorName() string          { return m.author }
+func (m *Metadata) GetAuthorAvatar() string        { return m.authorAvatar }
+func (m *Metadata) GetAuthorProfile() string       { return "" }
+func (m *Metadata) GetContentProviderName() string { return "" }
+func (m *Metadata) GetContentProviderURL() string  { return "" }
+func (m *Metadata) GetContent() *goquery.Selection { return m.content }
+func (m *Metadata) GetTitle() string               { return m.title }
+func (m *Metadata) HasContent() bool               { return m.content != nil }
+
+func (r *Rules) PreExecute(doc *goquery.Selection) *Metadata {
+	return r.preExecute(doc)
+}
+
 func (r *Rules) preExecute(doc *goquery.Selection) *Metadata {
 	runtime := NewPipeRuntime(doc, false)
 	md := &Metadata{}
@@ -805,6 +819,10 @@ func (r *Rules) execChain(rt *PipeRuntime, s *goquery.Selection, chain []IPipeEn
 		result = Exec(chain[i], rt, result)
 	}
 	return result
+}
+
+func (r *Rules) PostExecute(doc *goquery.Selection) *goquery.Selection {
+	return r.postExecute(doc)
 }
 
 func (r *Rules) postExecute(doc *goquery.Selection) *goquery.Selection {

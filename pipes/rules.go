@@ -5,19 +5,21 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/advancedlogic/goquery"
-	"golang.org/x/net/html"
-	"log"
+	// "golang.org/x/net/html"
+	//	"log"
 	"reflect"
-	"regexp"
+	// "regexp"
 	"strconv"
-	"strings"
-	"text/scanner"
+	// "strings"
+	// "text/scanner"
 )
 
 type PipeRuntime struct {
 	doc       *goquery.Selection
 	vars      map[string]interface{}
 	immutable bool
+	funcs     map[string]*PipeAction
+	stack     []IPipeArgument
 }
 
 func NewPipeRuntime(d *goquery.Selection, im bool) *PipeRuntime {
@@ -25,6 +27,22 @@ func NewPipeRuntime(d *goquery.Selection, im bool) *PipeRuntime {
 		doc:       d,
 		immutable: im,
 		vars:      make(map[string]interface{}),
+		stack:     make([]IPipeArgument, 0, 10),
+		funcs:     make(map[string]*PipeAction),
+	}
+}
+
+func (r *PipeRuntime) Copy() *PipeRuntime {
+	vars := make(map[string]interface{})
+	for k, v := range r.vars {
+		vars[k] = v
+	}
+	return &PipeRuntime{
+		doc:       r.Peek().Selection(),
+		immutable: false,
+		vars:      vars,
+		stack:     make([]IPipeArgument, 0, 10),
+		funcs:     r.funcs,
 	}
 }
 
@@ -43,32 +61,44 @@ func (r *PipeRuntime) String() string {
 	return buffer.String()
 }
 
-type IPipeEntry interface {
-	Compile(tok rune, s *scanner.Scanner) IPipeEntry
-	// Exec(runtime *PipeRuntime, object interface{}) interface{}
-	ExecWithSelection(runtime *PipeRuntime, s *goquery.Selection) interface{}
-	ExecWithString(runtime *PipeRuntime, str string) interface{}
-	ExecWithPipeEntry(runtime *PipeRuntime, entry *IPipeEntry) interface{}
-	String() string
+func (r *PipeRuntime) Push(a IPipeArgument) IPipeArgument {
+	r.stack = append(r.stack, a)
+	return a
 }
+
+func (r *PipeRuntime) Pop() IPipeArgument {
+	entry := r.stack[len(r.stack)-1]
+	r.stack = r.stack[:len(r.stack)-1]
+	return entry
+}
+
+func (r *PipeRuntime) Peek() IPipeArgument {
+	if len(r.stack) < 1 {
+		return NewSelectionArgument(r.doc)
+	}
+	return r.stack[len(r.stack)-1]
+}
+
+func (r *PipeRuntime) Call(funcname string, arg IPipeArgument) IPipeArgument {
+	if fn, ok := r.funcs[funcname]; ok {
+		return fn.Exec(r, arg)
+	}
+	panic(fmt.Sprintf("function '%s' undefined", funcname))
+}
+
+/**
+	operator (arguments) {block}
+	PipeEntry
+		PipeExpression
+		PipeArgument(PipeExpression)
+		PipeAction
+			PipeArgument
+			[]PipeEntry
+
+**/
 
 type IPipeStructWrapper interface {
 	WrapStruct(runtime *PipeRuntime, p *PipeStruct, s *goquery.Selection) interface{}
-}
-
-type PipeResult struct {
-}
-
-type PipeEmptyResult struct {
-	PipeResult
-}
-
-type PipeEntry struct {
-}
-
-func (p *PipeEntry) String() string { return "PipeEntry" }
-func (p *PipeEntry) Compile(tok rune, s *scanner.Scanner) IPipeEntry {
-	return p
 }
 
 // TODO:
@@ -77,42 +107,8 @@ func (p *PipeEntry) Compile(tok rune, s *scanner.Scanner) IPipeEntry {
 // for Next().Exec() top entry on Stack used as argument
 // chain result == top entry on Stack
 
-func Exec(p IPipeEntry, runtime *PipeRuntime, object interface{}) interface{} {
-	var result interface{}
-	if debug {
-		log.Printf("Exec(%s,...)", p)
-	}
-	if s, ok := object.(*goquery.Selection); ok {
-		result = p.ExecWithSelection(runtime, s)
-	} else if entry, ok := object.(*IPipeEntry); ok {
-		result = p.ExecWithPipeEntry(runtime, entry)
-	} else if str, ok := object.(string); ok {
-		if debug {
-			log.Printf("exec with string '%s' ", str)
-		}
-		result = p.ExecWithString(runtime, str)
-	} else if st, ok := object.(*PipeStruct); ok {
-		if debug {
-			log.Printf("argument are PipeStruct! %+v", st)
-		}
-		if wrapper, ok := p.(IPipeStructWrapper); ok {
-			result = wrapper.WrapStruct(runtime, st, s)
-		}
-
-	}
-	return result
-}
-
-func (p *PipeEntry) ExecWithSelection(runtime *PipeRuntime, s *goquery.Selection) interface{} {
-	return nil
-}
-
-func (p *PipeEntry) ExecWithPipeEntry(runtime *PipeRuntime, entry *IPipeEntry) interface{} {
-	return nil
-}
-
-func (p *PipeEntry) ExecWithString(runtime *PipeRuntime, str string) interface{} {
-	return nil
+func Exec(p IPipeEntry, runtime *PipeRuntime, arg IPipeArgument) IPipeArgument {
+	return p.Exec(runtime, arg)
 }
 
 /*
@@ -140,489 +136,6 @@ func (p *PipeEntry) ExecWithString(runtime *PipeRuntime, str string) interface{}
         and return next.exec(func(runtime,arg))
 */
 
-type PipeMatch struct {
-	PipeEntry
-}
-
-func (p *PipeMatch) Find(pattern string) interface{} {
-	return nil
-}
-
-type PipeMatchRegexp struct {
-	PipeMatch
-	regexp *regexp.Regexp
-	input  string
-}
-
-type PipeMatchXPath struct {
-	PipeMatch
-}
-
-type PipeFind struct {
-	PipeMatch
-	selector string
-}
-
-func (p *PipeFind) Compile(tok rune, s *scanner.Scanner) IPipeEntry {
-	/* tokens: (, "", ) */
-	for s.Scan() != scanner.EOF && "(" != s.TokenText() {
-	}
-
-	if "(" == s.TokenText() {
-		for s.Scan() != scanner.String {
-		}
-		p.selector = s.TokenText()
-		p.selector = p.selector[1 : len(p.selector)-1]
-		for s.TokenText() != ")" && s.Scan() != scanner.EOF {
-		}
-	}
-	return p
-}
-
-func (p *PipeFind) String() string { return fmt.Sprintf("PipeFind('%s')", p.selector) }
-
-func (p *PipeFind) ExecWithSelection(r *PipeRuntime, s *goquery.Selection) interface{} {
-	result := s.Find(p.selector)
-	if result.Length() < 1 {
-		if debug {
-			log.Printf("PipeFind() return empty list for ('%s')", p.selector)
-		}
-		html, err := s.Html()
-		if err == nil {
-			if debug {
-				log.Printf("source html:\n%s\n", html)
-			}
-		}
-	}
-	return result
-}
-
-type PipeSelectGroupByNumber struct {
-	PipeEntry
-	groupNumber int
-}
-
-func (p *PipeSelectGroupByNumber) ExecWithPipeEntry(r *PipeRuntime, entry interface{}) interface{} {
-	result := make([]string, 3)
-	if rx, ok := entry.(*PipeMatchRegexp); ok {
-		res := rx.regexp.FindAllStringSubmatch(rx.input, -1)
-		for i := range res {
-			sub := res[i]
-			if len(sub) < p.groupNumber {
-				result = append(result, sub[p.groupNumber])
-			}
-		}
-	}
-	return result
-}
-
-type PipeStruct struct {
-	PipeEntry
-	expected []string
-	fields   map[string]interface{}
-	chains   [][]IPipeEntry
-}
-
-func (p *PipeStruct) String() string {
-	return fmt.Sprintf("PipeStruct(%+v [%+v])", p.fields, p.chains)
-}
-
-func (p *PipeStruct) Compile(tok rune, s *scanner.Scanner) IPipeEntry {
-	p.expected = make([]string, 0, 5)
-	/* struct format
-	   struct(<names>) { <chains> }
-	*/
-	for s.Scan() != scanner.EOF && "(" != s.TokenText() {
-	} // names section begins
-	p.CompileNamesList(tok, s)
-	for s.Scan() != scanner.EOF && "{" != s.TokenText() {
-	} // chains section begins
-	p.CompileChainsList(tok, s)
-	return p
-}
-
-func (p *PipeStruct) CompileNamesList(tok rune, s *scanner.Scanner) {
-	/* names format
-	   "nameA"[,"nameB"]
-	*/
-	for s.TokenText() != ")" {
-		tok = s.Scan()
-		if tok == scanner.String {
-			name := s.TokenText()
-			name = name[1 : len(name)-1]
-			p.expected = append(p.expected, name)
-		} else if s.TokenText() == "," {
-			continue
-		}
-	}
-	if debug {
-		log.Printf("PipeStruct(%v) fields built", p.expected)
-	}
-}
-
-var debug bool = false
-
-func (p *PipeStruct) CompileChainsList(tok rune, s *scanner.Scanner) {
-	// theoretically
-	oldPos := s.Pos()
-	for s.Scan() != scanner.EOF && "(" != s.TokenText() {
-	} // go to chain begin
-	pipe := make([]IPipeEntry, 0, 5)
-	for s.TokenText() != "}" {
-
-		tok = s.Scan()
-		if debug {
-			log.Printf("start with: '%s'", s.TokenText())
-		}
-		entry := compilerFactoryDbg(tok, s)
-		if debug {
-			log.Printf("pipe entry='%s", entry)
-		}
-		if entry != nil {
-			pipe = append(pipe, entry)
-			tok = s.Scan() // shift out from last ')'
-			continue
-		} else if "|" == s.TokenText() {
-			if debug {
-				log.Printf("break on |, continue")
-			}
-			continue
-		}
-		if debug {
-			log.Printf("chain finished...%+v at '%s'", pipe, s.TokenText())
-		}
-		p.chains = append(p.chains, pipe)
-		if s.Pos() == oldPos {
-			panic("infinite loop!")
-		}
-		oldPos = s.Pos()
-		pipe = make([]IPipeEntry, 0, 5)
-	}
-}
-
-func compilerFactoryDbg(tok rune, s *scanner.Scanner) IPipeEntry {
-	if debug {
-		log.Printf("debug factory: token='%s'", s.TokenText())
-	}
-	if "find" == s.TokenText() {
-		return compileAndReturn(&PipeFind{}, tok, s)
-	} else if "text" == s.TokenText() {
-		return compileAndReturn(&PipeText{}, tok, s)
-	} else if "first" == s.TokenText() {
-		return compileAndReturn(&PipeFirst{}, tok, s)
-	} else if "struct" == s.TokenText() {
-		return compileAndReturn(&PipeStruct{}, tok, s)
-	} else if "as" == s.TokenText() {
-		return compileAndReturn(&PipeAs{}, tok, s)
-		//return (&PipeAs{}).Compile(tok, s).(*PipeEntry)
-	} else if "unhumanPublishDate" == s.TokenText() {
-		return compileAndReturn(&PipeUnhumanDate{}, tok, s)
-	} else if "remove" == s.TokenText() {
-		return compileAndReturn(&PipeRemove{}, tok, s)
-	} else if "attr" == s.TokenText() {
-		return compileAndReturn(&PipeAttr{}, tok, s)
-	} else if "store" == s.TokenText() {
-		return compileAndReturn(&PipeStore{}, tok, s)
-	} else if "clone" == s.TokenText() {
-		return compileAndReturn(&PipeClone{}, tok, s)
-	} else if "restore" == s.TokenText() {
-		return compileAndReturn(&PipeRestore{}, tok, s)
-	} else if "|" == s.TokenText() {
-
-	} else if ")" == s.TokenText() {
-		return nil
-	}
-	return nil
-}
-
-/**
-run each chain from s
-result of each chain must be as("<name>")
-
-**/
-
-func (p *PipeStruct) ExecWithSelection(r *PipeRuntime, s *goquery.Selection) interface{} {
-	if debug {
-		log.Printf("pipe chain: %+v", p.chains)
-	}
-	p.fields = make(map[string]interface{})
-	sr := NewPipeRuntime(s, true)
-	for i := range p.chains {
-
-		var result interface{} = s
-		for k := range p.chains[i] {
-			result = Exec(p.chains[i][k], sr, result)
-		}
-
-		if name, ok := result.(*PipeAs); ok {
-			found := false
-			for l := range p.expected {
-				if p.expected[l] == name.name {
-					found = true
-				}
-			}
-			if found {
-				p.fields[name.name] = sr.vars[name.name]
-			} else {
-				// unknown name for field
-				panic(fmt.Sprintf("unknown field '%s' for struct{%v}", name.name, p.fields))
-			}
-		} else {
-			// fatal error - chain must ends with struct's field name
-			panic(fmt.Sprintf("struct(...) chains must finished wiht `| as(\"name\")`"))
-		}
-		// copy expected fields from sr.vars to p.fields */
-	}
-	if debug {
-		log.Printf("return:'%+v'", sr)
-	}
-	return p
-}
-
-type PipeAction struct {
-	PipeEntry
-}
-
-type PipeFirst struct {
-	PipeAction
-}
-
-func (p *PipeFirst) Compile(tok rune, s *scanner.Scanner) IPipeEntry {
-	return p
-}
-
-func (p *PipeFirst) ExecWithSelection(r *PipeRuntime, s *goquery.Selection) interface{} {
-	return s.First()
-}
-
-func (p *PipeFirst) String() string { return "PipeFirst()" }
-
-type PipeStore struct {
-	PipeAction
-	name string
-}
-
-func (p *PipeStore) Compile(tok rune, s *scanner.Scanner) IPipeEntry {
-	if s.Scan() != scanner.EOF && "(" == s.TokenText() {
-		if s.Scan() != scanner.EOF {
-			p.name = s.TokenText()
-			p.name = p.name[1 : len(p.name)-1]
-			if s.Scan() != scanner.EOF && ")" == s.TokenText() {
-				return p
-			}
-		}
-	}
-	return nil
-}
-
-func (p *PipeStore) String() string {
-	return fmt.Sprintf("PipeStore('%s')", p.name)
-}
-
-func (p *PipeStore) getStore(rt *PipeRuntime) map[string]interface{} {
-	var store map[string]interface{}
-	st, ok := rt.vars["...store..."]
-	if !ok {
-		store = make(map[string]interface{})
-		rt.vars["...store..."] = store
-	} else {
-		store, _ = st.(map[string]interface{})
-	}
-	return store
-}
-
-func (p *PipeStore) ExecWithSelection(r *PipeRuntime, s *goquery.Selection) interface{} {
-	store := p.getStore(r)
-	store[p.name] = s
-	return s
-}
-
-type PipeClone struct {
-	PipeStore
-}
-
-func (p *PipeClone) ExecWithSelection(r *PipeRuntime, s *goquery.Selection) interface{} {
-	store := p.getStore(r)
-	html, err := s.Html()
-	if err == nil {
-		doc, err := goquery.NewDocumentFromReader(strings.NewReader(html))
-		if err == nil {
-			store[p.name] = doc.Selection
-		}
-	}
-	return s
-}
-
-type PipeRestore struct {
-	PipeStore
-}
-
-func (p *PipeRestore) String() string {
-	return fmt.Sprintf("PipeRestore('%s')", p.name)
-}
-
-func (p *PipeRestore) ExecWithSelection(r *PipeRuntime, s *goquery.Selection) interface{} {
-	store := p.getStore(r)
-	result, ok := store[p.name]
-	if ok {
-		return result
-	} else {
-		log.Printf("could not find '%s' in store %+v", p.name, store)
-		panic("oops")
-	}
-	return s
-}
-
-type PipeScore struct {
-	PipeAction
-	score int
-}
-
-func (p *PipeScore) Compile(tok rune, s *scanner.Scanner) IPipeEntry {
-	if s.Next() != scanner.EOF && "(" == s.TokenText() {
-		if s.Next() != scanner.EOF {
-			intval, err := strconv.Atoi(s.TokenText())
-			if err == nil {
-				p.score = intval
-			}
-			if s.Next() != scanner.EOF && ")" == s.TokenText() {
-				return p
-			}
-		}
-	}
-	return nil
-}
-
-func (p *PipeScore) ExecWithSelection(r *PipeRuntime, s *goquery.Selection) interface{} {
-	score, _ := s.Attr("gravityScore")
-	scoreValue := 0
-	if score != "" {
-		scoreInt, err := strconv.Atoi(score)
-		if err == nil {
-			scoreValue = scoreInt
-		}
-	}
-	setAttr(s, "gravityScore", fmt.Sprintf("%d", scoreValue+p.score))
-	return s
-}
-
-type PipeRemove struct {
-	PipeAction
-}
-
-func (p *PipeRemove) Compile(tok rune, s *scanner.Scanner) IPipeEntry {
-	return p
-}
-
-func (p *PipeRemove) ExecWithSelection(r *PipeRuntime, s *goquery.Selection) interface{} {
-	s.Each(func(i int, s *goquery.Selection) {
-		s.Remove()
-	})
-	return s
-}
-
-type PipeText struct {
-	PipeAction
-}
-
-func (p *PipeText) Compile(tok rune, s *scanner.Scanner) IPipeEntry {
-	return p
-}
-
-func (p *PipeText) ExecWithSelection(r *PipeRuntime, s *goquery.Selection) interface{} {
-	return s.Text()
-}
-
-func (p *PipeText) String() string { return "PipeText()" }
-
-type PipeAttr struct {
-	PipeAction
-	name  string
-	value string
-}
-
-func (p *PipeAttr) Compile(tok rune, s *scanner.Scanner) IPipeEntry {
-	for s.Scan() != scanner.EOF && "(" != s.TokenText() {
-	}
-
-	if "(" == s.TokenText() {
-		for s.Scan() != scanner.String {
-		}
-		p.name = s.TokenText()
-		p.name = p.name[1 : len(p.name)-1]
-		for s.TokenText() != ")" && s.Scan() != scanner.EOF {
-		}
-	}
-	return p
-}
-
-func (p *PipeAttr) ExecWithSelection(r *PipeRuntime, s *goquery.Selection) interface{} {
-	value, ok := s.Attr(p.name)
-	if ok {
-		p.value = value
-	}
-	return p.value
-}
-
-func (p *PipeAttr) String() string { return fmt.Sprintf("PipeAttr(\"%s\")", p.name) }
-
-type PipeUnhumanDate struct {
-	PipeAction
-}
-
-func (p *PipeUnhumanDate) ExecWithSelection(r *PipeRuntime, s *goquery.Selection) interface{} {
-	return s.Text()
-}
-
-func (p *PipeUnhumanDate) ExecWithString(r *PipeRuntime, str string) interface{} {
-	return str
-}
-
-type PipeAs struct {
-	PipeAction
-	name  string
-	value interface{}
-}
-
-func (p *PipeAs) ExecWithSelection(r *PipeRuntime, s *goquery.Selection) interface{} {
-	p.value = s
-	r.vars[p.name] = p.value
-	return p
-}
-
-func (p *PipeAs) ExecWithString(r *PipeRuntime, str string) interface{} {
-	p.value = str
-	r.vars[p.name] = p.value
-	return p
-}
-
-func (p *PipeAs) Compile(tok rune, s *scanner.Scanner) IPipeEntry {
-	for s.Scan() != scanner.EOF && s.TokenText() != "(" {
-	}
-	for s.Scan() != scanner.String {
-	}
-	p.name = s.TokenText()
-	p.name = p.name[1 : len(p.name)-1]
-	for s.Scan() != scanner.EOF && s.TokenText() != ")" {
-	}
-	return p
-}
-
-func (p *PipeAs) String() string { return fmt.Sprintf("PipeAs('%s'->'%+v')", p.name, p.value) }
-func (p *PipeAs) WrapStruct(runtime *PipeRuntime, st *PipeStruct, s *goquery.Selection) interface{} {
-	if _, ok := runtime.vars[p.name]; ok {
-		log.Printf("WARNING: field '%s' ALREADY EXISTS", p.name)
-	}
-	runtime.vars[p.name] = st.fields
-	return runtime.String()
-}
-
-type PipeFrom struct {
-	PipeAction
-	name  string
-	value interface{}
-}
-
 type Rules struct {
 	Host                string
 	prepare             []IPipeEntry
@@ -633,6 +146,11 @@ type Rules struct {
 	extractTitle        []IPipeEntry
 	scoreContent        []IPipeEntry
 	extractContent      []IPipeEntry
+	Source              *SingleRuleJSON
+}
+
+func (r *Rules) Compare(t *Rules) int {
+	return 0
 }
 
 type SingleRuleJSON struct {
@@ -645,6 +163,17 @@ type SingleRuleJSON struct {
 	ExtractTitle   string   `json:"extract_title"`
 	ExtractContent string   `json:"extract_content"`
 	Sanitize       string   `json:"sanitizie"`
+}
+
+type RulesScript struct {
+	prepare             string `json:"prepare"`
+	extractDate         string `json:"extract_date"`
+	extractAuthor       string `json:"extract_author"`
+	extractAuthorAvatar string `json:"extract_author_avatar"`
+	sanitize            string `json:"sanitize_doc"`
+	extractTitle        string `json:"extract_title"`
+	scoreContent        string `json:"score_content"`
+	extractContent      string `json:"extract_content"`
 }
 
 func (r *Rules) CompileAll(srj *SingleRuleJSON) {
@@ -669,75 +198,12 @@ func (r *Rules) CompileAll(srj *SingleRuleJSON) {
 }
 
 func (r *Rules) Compile(pipe string) []IPipeEntry {
-	if pipe == "" {
-		return nil
-	}
-	var result = make([]IPipeEntry, 0, 5)
-	var s scanner.Scanner
-	s.Init(strings.NewReader(pipe))
-	var tok rune
-	for tok != scanner.EOF {
-		tok = s.Scan()
-		entry := compilerFactory(tok, &s)
-		if entry != nil {
-			result = append(result, entry)
-			tok = s.Scan() // shift out from last ')'
-		}
-		if "|" == s.TokenText() {
-			continue
-		} else if ")" == s.TokenText() {
-			return result
-		}
+	exps := parsePipe(pipe)
+	result := make([]IPipeEntry, len(exps))
+	for i := range exps {
+		result[i] = exps[i].Compile()
 	}
 	return result
-}
-
-func compilerFactory(tok rune, s *scanner.Scanner) IPipeEntry {
-	if "find" == s.TokenText() {
-		return compileAndReturn(&PipeFind{}, tok, s)
-	} else if "text" == s.TokenText() {
-		return compileAndReturn(&PipeText{}, tok, s)
-	} else if "first" == s.TokenText() {
-		return compileAndReturn(&PipeFirst{}, tok, s)
-	} else if "struct" == s.TokenText() {
-		return compileAndReturn(&PipeStruct{}, tok, s)
-	} else if "as" == s.TokenText() {
-		return compileAndReturn(&PipeAs{}, tok, s)
-		//return (&PipeAs{}).Compile(tok, s).(*PipeEntry)
-	} else if "unhumanPublishDate" == s.TokenText() {
-		return compileAndReturn(&PipeUnhumanDate{}, tok, s)
-	} else if "remove" == s.TokenText() {
-		return compileAndReturn(&PipeRemove{}, tok, s)
-	} else if "attr" == s.TokenText() {
-		return compileAndReturn(&PipeAttr{}, tok, s)
-	} else if "store" == s.TokenText() {
-		return compileAndReturn(&PipeStore{}, tok, s)
-	} else if "clone" == s.TokenText() {
-		return compileAndReturn(&PipeClone{}, tok, s)
-	} else if "restore" == s.TokenText() {
-		return compileAndReturn(&PipeRestore{}, tok, s)
-	} else if "|" == s.TokenText() {
-
-	} else if ")" == s.TokenText() {
-		return nil
-	}
-	return nil
-}
-
-func compileAndReturn(object IPipeEntry, tok rune, s *scanner.Scanner) IPipeEntry {
-	object.Compile(tok, s)
-	return object
-}
-
-type RulesScript struct {
-	prepare             string `json:"prepare"`
-	extractDate         string `json:"extract_date"`
-	extractAuthor       string `json:"extract_author"`
-	extractAuthorAvatar string `json:"extract_author_avatar"`
-	sanitize            string `json:"sanitize_doc"`
-	extractTitle        string `json:"extract_title"`
-	scoreContent        string `json:"score_content"`
-	extractContent      string `json:"extract_content"`
 }
 
 func (r *Rules) UnmarshalJSON(data []byte) {
@@ -806,15 +272,15 @@ func (r *Rules) preExecute(doc *goquery.Selection) *Metadata {
 	}
 	if r.extractContent != nil {
 		result := r.execChain(runtime, doc, r.extractContent)
-		if sel, ok := result.(*goquery.Selection); ok {
-			md.content = sel
+		if result.getType() == "selection" {
+			md.content = result.Selection()
 		}
 	}
 	return md
 }
 
-func (r *Rules) execChain(rt *PipeRuntime, s *goquery.Selection, chain []IPipeEntry) interface{} {
-	var result interface{} = s
+func (r *Rules) execChain(rt *PipeRuntime, s *goquery.Selection, chain []IPipeEntry) IPipeArgument {
+	var result IPipeArgument = NewSelectionArgument(s)
 	for i := range chain {
 		result = Exec(chain[i], rt, result)
 	}
@@ -829,8 +295,8 @@ func (r *Rules) postExecute(doc *goquery.Selection) *goquery.Selection {
 	runtime := NewPipeRuntime(doc, false)
 	if r.sanitize != nil {
 		result := r.execChain(runtime, doc, r.sanitize)
-		if sel, ok := result.(*goquery.Selection); ok {
-			return sel
+		if result.getType() == "selection" {
+			return result.Selection()
 		}
 	}
 	return doc
@@ -855,25 +321,5 @@ func Unmarshal(data map[string]string, S interface{}) {
 		case reflect.String:
 			value.SetString(strVal)
 		}
-	}
-}
-
-func setAttr(s *goquery.Selection, attr string, value string) {
-	if s.Size() > 0 {
-		node := s.Get(0)
-		attrs := make([]html.Attribute, 0)
-		for _, a := range node.Attr {
-			if a.Key != attr {
-				newAttr := new(html.Attribute)
-				newAttr.Key = a.Key
-				newAttr.Val = a.Val
-				attrs = append(attrs, *newAttr)
-			}
-		}
-		newAttr := new(html.Attribute)
-		newAttr.Key = attr
-		newAttr.Val = value
-		attrs = append(attrs, *newAttr)
-		node.Attr = attrs
 	}
 }

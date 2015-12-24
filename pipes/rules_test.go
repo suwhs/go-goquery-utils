@@ -1,8 +1,10 @@
 package pipes
 
 import (
+	"fmt"
 	"github.com/advancedlogic/goquery"
 	"log"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -49,13 +51,14 @@ func TestCompiler(t *testing.T) {
 		t.Fail()
 		return
 	}
+	fmt.Printf("compiled pipe0:\n%+v\n", p)
 	r.execChain(rt, d, p)
 	log.Printf("PIPE0 result: %s", rt.String())
 	if title, ok := rt.getVariable("title"); ok {
 		if title == "title" {
 			log.Printf("PIPE0 test PASSED")
 		} else {
-			log.Printf("PIPE0 test FAILED: WRONG RESULT")
+			log.Printf("PIPE0 test FAILED: WRONG RESULT '%s' (%v)", title, reflect.TypeOf(title))
 			t.Fail()
 		}
 	} else {
@@ -96,8 +99,8 @@ func TestCompiler(t *testing.T) {
 		return
 	}
 	d = saved.Clone()
-	r.execChain(rt, d, p)
-	log.Printf("PIPE3 result: %s", rt.String())
+	res := r.execChain(rt, d, p)
+	log.Printf("PIPE3 result: %s\nruntime:%v", res.String(), rt.vars)
 	p = r.Compile(PIPE4)
 	d = saved.Clone()
 	var html string
@@ -113,7 +116,7 @@ func TestCompiler(t *testing.T) {
 	}
 
 	if err == nil {
-		log.Printf("PIPE4 result (sanitize): %s", html)
+		log.Printf("PIPE4 result (sanitize): %s\nruntime: %v\n", html, rt.String())
 	} else {
 		log.Printf("PIPE4 test failed")
 		t.Fail()
@@ -126,12 +129,12 @@ func TestCompiler(t *testing.T) {
 
 }
 
-func TestPipeConcat(t *testing.T) {
+func TestPipeExpressions(t *testing.T) {
 	compileAndRun("(find(\"div.article\")|first|push|(find(\"p.author\")|remove|pop)", DATA, t)
 
 }
 
-func TestPipeAdd(t *testing.T) {
+func TestPipeConcat(t *testing.T) {
 	compileAndRun(
 		"concat{ (clone(\"doc\")|find(\"div.article\")|first|push|(find(\"p.author\")|remove|pop) (restore(\"doc\")|find(\"p.author\")|first) }", DATA, t)
 }
@@ -148,9 +151,10 @@ func compileAndRun(pipe string, data string, t *testing.T) {
 	log.Printf("result: '''%s'''", docHtml(result, t))
 }
 
-func docHtml(sel interface{}, t *testing.T) string {
-	if s, ok := sel.(*goquery.Selection); ok {
-		html, _ := s.Html()
+func docHtml(sel IPipeArgument, t *testing.T) string {
+
+	if sel.getType() == "selection" {
+		html, _ := sel.Selection().Html()
 		return html
 	}
 	t.Fail()

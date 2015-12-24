@@ -22,39 +22,8 @@ func (exp *cExp) Compile() IPipeEntry {
 		r.Compile(exp)
 		return r
 	}
-	fmt.Printf("'%v'.Compile(token:%d)\n", exp, exp.token)
+	panic("unhandled compilation error")
 	return nil
-	// if exp.token == scanner.String {
-	// 	if !strings.HasPrefix(exp.text, "\"") {
-	// 		result := compilerFactory(exp)
-	// 		if result == nil {
-	// 			panic(fmt.Sprintf("exp '%v' returns nil", exp))
-	// 		}
-	// 	}
-	// 	//		fmt.Printf("exp token: '%s'\n", exp.text)
-	// 	arg := NewStringArgument(exp.text)
-	// 	if entry, ok := arg.(IPipeEntry); ok {
-	// 		return entry
-	// 	}
-	// 	if len(exp.exps) < 0 {
-	// 		panic("string arg with args!")
-	// 	}
-	// } else if exp.text != "" {
-	// 	return compilerFactory(exp)
-	// } else if len(exp.exps) > 0 {
-	// 	var chain []IPipeEntry
-	// 	for _, v := range exp.exps {
-	// 		// fmt.Printf("exp entry: %+v\n", exp.exps[i])
-	// 		r := v.Compile()
-	// 		fmt.Printf("compiled exp: %v", r)
-	// 		chain = append(chain, r)
-	// 	}
-	// 	return &PipeExpression{chain: chain}
-	// 	// result := &PipeExpression{}
-	// 	// return result.Compile(exp)
-	// }
-
-	// return nil
 }
 
 func (exp *cExp) CompileCall() IPipeEntry {
@@ -128,7 +97,6 @@ func compilePipe(pipe string) []IPipeEntry {
 }
 
 func compilerFactory(exp *cExp) IPipeEntry {
-	//	fmt.Printf("COMPILE_EXP: %+v", exp)
 	var pe IPipeEntry
 	text := exp.text
 	if "find" == text {
@@ -163,7 +131,6 @@ func compilerFactory(exp *cExp) IPipeEntry {
 		pe = &PipeExpression{}
 	}
 	if pe != nil {
-		fmt.Printf("%v -> call %v.Compile()\n", exp, pe)
 		return pe.Compile(exp)
 	}
 	fmt.Printf("return nil for exp %+v\n", exp)

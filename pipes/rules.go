@@ -5,13 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/advancedlogic/goquery"
-	// "golang.org/x/net/html"
-	//	"log"
 	"reflect"
-	// "regexp"
 	"strconv"
-	// "strings"
-	// "text/scanner"
 )
 
 type PipeRuntime struct {
@@ -101,13 +96,13 @@ type IPipeStructWrapper interface {
 	WrapStruct(runtime *PipeRuntime, p *PipeStruct, s *goquery.Selection) interface{}
 }
 
-// TODO:
-// change:
-// result of each ExecWith... pushed to runtime.Stack
-// for Next().Exec() top entry on Stack used as argument
-// chain result == top entry on Stack
-
 func Exec(p IPipeEntry, runtime *PipeRuntime, arg IPipeArgument) IPipeArgument {
+	defer func() {
+		if r := recover(); r != nil {
+			fmt.Printf("error executing: runtime: %+v\n opcode:%+v\n", runtime, p)
+			panic(r)
+		}
+	}()
 	return p.Exec(runtime, arg)
 }
 
@@ -281,8 +276,8 @@ func (r *Rules) preExecute(doc *goquery.Selection) *Metadata {
 
 func (r *Rules) execChain(rt *PipeRuntime, s *goquery.Selection, chain []IPipeEntry) IPipeArgument {
 	var result IPipeArgument = NewSelectionArgument(s)
-	for i := range chain {
-		result = Exec(chain[i], rt, result)
+	for _, v := range chain {
+		result = Exec(v, rt, result)
 	}
 	return result
 }

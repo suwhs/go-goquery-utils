@@ -9,17 +9,16 @@ type PipeAction struct {
 	args []IPipeArgument
 }
 
-func (p *PipeAction) String() string { return fmt.Sprintf("action[%v]", p.args) }
 func (p *PipeAction) Compile(exp *cExp) IPipeEntry {
 	if len(exp.exps) > 0 {
-		fmt.Printf("compile action: %s with args %v\n", exp.text, exp.exps[0])
+		// fmt.Printf("compile action: %s with args %v\n", exp.text, exp.exps[0])
 		args := &exp.exps[0]
 		p.args = p.CompileArgs(args)
 		if len(exp.exps) > 1 {
 			fmt.Printf("\t and body: %v", exp.exps[1:len(exp.exps)])
 		}
 	}
-	fmt.Printf("attached:%v\n", p.args)
+	// fmt.Printf("attached:%v\n", p.args)
 	return p
 }
 

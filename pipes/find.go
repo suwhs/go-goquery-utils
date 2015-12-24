@@ -9,15 +9,13 @@ type PipeFind struct {
 }
 
 func (p *PipeFind) Exec(r *PipeRuntime, arg IPipeArgument) IPipeArgument {
-	fmt.Printf("PIPEFIND.EXEC:%v\n", p.args)
 	if arg.getType() == "selection" {
-		argstr := p.getStringArgument(0)
-		fmt.Printf("\tgetStringArgument(0)=='%s'", argstr)
+		argstr := p.getStringArgument(0, r, arg)
 		sel := arg.Selection()
 		res := sel.Find(argstr)
 		return NewSelectionArgument(res)
 	}
-	panic("find must be executed with selection scope")
+	panic(fmt.Sprintf("find must be executed with selection scope, received: %+v", arg.getType()))
 }
 
 func (p *PipeFind) Compile(exp *cExp) IPipeEntry {

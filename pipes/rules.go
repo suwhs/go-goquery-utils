@@ -131,8 +131,7 @@ func Exec(p IPipeEntry, runtime *PipeRuntime, arg IPipeArgument) IPipeArgument {
         and return next.exec(func(runtime,arg))
 */
 
-type Rules struct {
-	Host                string
+type BaseRule struct {
 	prepare             []IPipeEntry
 	extractDate         []IPipeEntry
 	extractAuthor       []IPipeEntry
@@ -141,37 +140,34 @@ type Rules struct {
 	extractTitle        []IPipeEntry
 	scoreContent        []IPipeEntry
 	extractContent      []IPipeEntry
-	Source              *SingleRuleJSON
+	source              *RulesScript
+}
+
+type Rules struct {
+	BaseRule
+	Source *RulesScript // json-objects for rules source compiler
 }
 
 func (r *Rules) Compare(t *Rules) int {
 	return 0
 }
 
-type SingleRuleJSON struct {
-	Host           []string `json:"host"`
-	Aliases        []string `json:"aliases"`
-	Prepare        string   `json:"prepare"`
-	ExtractDate    string   `json:"extract_date"`
-	ExtractAuthor  string   `json:"extract_author"`
-	ScoreContent   string   `json:"score_content"`
-	ExtractTitle   string   `json:"extract_title"`
-	ExtractContent string   `json:"extract_content"`
-	Sanitize       string   `json:"sanitizie"`
-}
-
 type RulesScript struct {
-	prepare             string `json:"prepare"`
-	extractDate         string `json:"extract_date"`
-	extractAuthor       string `json:"extract_author"`
-	extractAuthorAvatar string `json:"extract_author_avatar"`
-	sanitize            string `json:"sanitize_doc"`
-	extractTitle        string `json:"extract_title"`
-	scoreContent        string `json:"score_content"`
-	extractContent      string `json:"extract_content"`
+	Prepare             string `json:"prepare"`
+	ExtractDate         string `json:"extract_date"`
+	ExtractAuthor       string `json:"extract_author"`
+	ExtractAuthorAvatar string `json:"extract_author_avatar"`
+	Sanitize            string `json:"sanitize_doc"`
+	ExtractTitle        string `json:"extract_title"`
+	ScoreContent        string `json:"score_content"`
+	ExtractContent      string `json:"extract_content"`
+	FindCommentInfo     string `json:"find_comment_info"`
+	FindTags            string `json:"find_tags"`
 }
 
-func (r *Rules) CompileAll(srj *SingleRuleJSON) {
+func (r *Rules) CompileAll() {
+	srj := r.Source
+	r.source = srj
 	if srj.Prepare != "" {
 		r.prepare = r.Compile(srj.Prepare)
 	}
@@ -193,6 +189,9 @@ func (r *Rules) CompileAll(srj *SingleRuleJSON) {
 }
 
 func (r *Rules) Compile(pipe string) []IPipeEntry {
+	if pipe == "" {
+		return nil
+	}
 	exps := parsePipe(pipe)
 	result := make([]IPipeEntry, len(exps))
 	for i := range exps {
@@ -201,25 +200,39 @@ func (r *Rules) Compile(pipe string) []IPipeEntry {
 	return result
 }
 
-func (r *Rules) UnmarshalJSON(data []byte) {
+func (r *Rules) UnmarshalJSON(data []byte) error {
 	script := &RulesScript{}
-	if err := json.Unmarshal(data, script); err != nil {
-		r.prepare = r.Compile(script.prepare)
-		r.extractDate = r.Compile(script.extractDate)
-		r.extractAuthor = r.Compile(script.extractAuthor)
-		r.extractAuthorAvatar = r.Compile(script.extractAuthorAvatar)
-		r.sanitize = r.Compile(script.sanitize)
-		r.extractTitle = r.Compile(script.extractTitle)
-		r.extractContent = r.Compile(script.extractContent)
+	if err := json.Unmarshal(data, script); err == nil {
+		r.prepare = r.Compile(script.Prepare)
+		r.extractDate = r.Compile(script.ExtractDate)
+		r.extractAuthor = r.Compile(script.ExtractAuthor)
+		r.extractAuthorAvatar = r.Compile(script.ExtractAuthorAvatar)
+		r.sanitize = r.Compile(script.Sanitize)
+		r.extractTitle = r.Compile(script.ExtractTitle)
+		r.extractContent = r.Compile(script.ExtractContent)
+	} else {
+		return err
 	}
+	r.Source = script
+	return nil
+}
+
+func (r *Rules) MarshalJSON() ([]byte, error) {
+	return json.Marshal(r.Source)
+}
+
+func NewPipeFromString(pipe string) []IPipeEntry {
+	r := &Rules{}
+	return r.Compile(pipe)
 }
 
 type Metadata struct {
-	date         string
-	author       string
-	authorAvatar string
-	title        string
-	content      *goquery.Selection
+	host         string             `json:"host"`
+	date         string             `json:"date"`
+	author       string             `json:"author"`
+	authorAvatar string             `json:"avatar"`
+	title        string             `json:"title"`
+	content      *goquery.Selection `json:"content"`
 }
 
 func (m *Metadata) GetDate() string                { return m.date }
@@ -297,7 +310,10 @@ func (r *Rules) postExecute(doc *goquery.Selection) *goquery.Selection {
 	return doc
 }
 
-func Unmarshal(data map[string]string, S interface{}) {
+// TODO: move to utils
+// marshal map[string]string to struct
+
+func UnmarshalMapSSToStruct(data map[string]string, S interface{}) {
 	st := reflect.TypeOf(S).Elem()
 	for i := 0; i < st.NumField(); i++ {
 		field := st.Field(i)
@@ -315,6 +331,31 @@ func Unmarshal(data map[string]string, S interface{}) {
 			}
 		case reflect.String:
 			value.SetString(strVal)
+		}
+	}
+}
+
+func UnmarshalMapSIToStruct(data map[string]interface{}, S interface{}) {
+	st := reflect.TypeOf(S).Elem()
+	for i := 0; i < st.NumField(); i++ {
+		field := st.Field(i)
+		name := field.Tag.Get("json")
+		val, ok := data[name]
+		value := reflect.ValueOf(field)
+		if !ok {
+			continue
+		}
+		switch field.Type.Kind() {
+		case reflect.Int:
+			if intVal, ok := val.(int); ok {
+				value.SetInt(int64(intVal))
+			}
+		case reflect.String:
+			if strVal, ok := val.(string); ok {
+				value.SetString(strVal)
+			}
+
+		case reflect.Struct:
 		}
 	}
 }

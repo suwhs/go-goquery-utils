@@ -34,7 +34,11 @@ func (exp *cExp) CompileCall() IPipeEntry {
 func parsePipe(pipe string) []cExp {
 	var s scanner.Scanner
 	s.Init(strings.NewReader(pipe))
-	return parse(&s)
+	s.Error = func(s *scanner.Scanner, msg string) {
+
+	}
+	r := parse(&s)
+	return r
 }
 
 /**
